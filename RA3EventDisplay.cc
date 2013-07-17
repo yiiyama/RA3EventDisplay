@@ -11,6 +11,7 @@
 #include "TObjArray.h"
 #include "TPaveText.h"
 #include "TLegend.h"
+#include "TLegendEntry.h"
 #include "TList.h"
 
 #include <iostream>
@@ -26,7 +27,7 @@ public:
 
   int addPath(TString const&);
   void setPtThreshold(double _pt) { ptThreshold_ = _pt; }
-  void setPFJetCollection(TString const& _pfJetCollection) { pfJetCollection_ = _pfJetCollection; }
+  void setPFJetCollection(TString const&);
 
   bool showEvent(unsigned, unsigned);
   bool showNextEvent();
@@ -50,6 +51,9 @@ private:
 
   TCanvas canvas_;
   TH2F etaPhiField_;
+  TLegend sizeLegend_;
+  TLegend colorLegend_;
+  TPaveText eventInfo_;
 
   TObjArray garbageCollection_;
 };
@@ -66,6 +70,9 @@ RA3EventDisplay::RA3EventDisplay() :
   event_(),
   canvas_("evdisp", "RA3 Event Display"),
   etaPhiField_("evdisp", ";#eta;#phi", 100, -4., 4., 100, -TMath::Pi(), TMath::Pi()),
+  sizeLegend_(0.82, 0.35, 0.95, 0.5),
+  colorLegend_(0.82, 0.05, 0.95, 0.3),
+  eventInfo_(0.82, 0.8, 0.95, 0.95, "brNDC"),
   garbageCollection_()
 {
   mainTree_.SetBranchStatus("*", 0);
@@ -93,12 +100,54 @@ RA3EventDisplay::RA3EventDisplay() :
   etaPhiField_.GetXaxis()->SetTitleSize(0.05);
   etaPhiField_.GetYaxis()->SetTitleSize(0.05);
 
+  TMarker* tenGeV(new TMarker(0., 0., kFullCircle));
+  TMarker* hundredGeV(new TMarker(0., 0., kFullCircle));
+  tenGeV->SetMarkerSize(sizeNorm);
+  hundredGeV->SetMarkerSize(sizeNorm * 2.);
+
+  sizeLegend_.SetBorderSize(0);
+  sizeLegend_.SetFillStyle(0);
+  sizeLegend_.SetTextAlign(32); // right, center
+  sizeLegend_.AddEntry(tenGeV, "10 GeV", "P");
+  sizeLegend_.AddEntry(hundredGeV, "100 GeV", "P");
+
+  TMarker* photon(new TMarker(0., 0., kFullCircle));
+  TMarker* electron(new TMarker(0., 0., kFullCircle));
+  TMarker* muon(new TMarker(0., 0., kFullCircle));
+  TMarker* jetHadron(new TMarker(0., 0., kFullCircle));
+  TMarker* strayHadron(new TMarker(0., 0., kFullCircle));
+  photon->SetMarkerColor(kGreen);
+  electron->SetMarkerColor(kBlue);
+  muon->SetMarkerColor(kRed);
+  jetHadron->SetMarkerColor(kOrange);
+  strayHadron->SetMarkerColor(kBlack);
+
+  colorLegend_.AddEntry(photon, "Photon", "P");
+  colorLegend_.AddEntry(electron, "Electron", "P");
+  colorLegend_.AddEntry(muon, "Muon", "P");
+  colorLegend_.AddEntry(jetHadron, "Hadron in " + pfJetCollection_ + "PFJet", "P");
+  colorLegend_.AddEntry(strayHadron, "Hadron not in " + pfJetCollection_ + "PFJet", "P");
+
+  eventInfo_.SetBorderSize(1);
+
   garbageCollection_.SetOwner(true);
 }
 
 RA3EventDisplay::~RA3EventDisplay()
 {
   event_.releaseTree(mainTree_);
+
+  TList* colorList(colorLegend_.GetListOfPrimitives());
+  for(int iL(0); iL != colorList->GetEntries(); ++iL){
+    TLegendEntry* entry(static_cast<TLegendEntry*>(colorList->At(iL)));
+    delete entry->GetObject();
+  }
+
+  TList* sizeList(sizeLegend_.GetListOfPrimitives());
+  for(int iL(0); iL != sizeList->GetEntries(); ++iL){
+    TLegendEntry* entry(static_cast<TLegendEntry*>(sizeList->At(iL)));
+    delete entry->GetObject();
+  }
 }
 
 int
@@ -112,6 +161,22 @@ RA3EventDisplay::addPath(TString const& _path)
   if(first) event_.setInput(mainTree_);
 
   return result;
+}
+
+void
+RA3EventDisplay::setPFJetCollection(TString const& _pfJetCollection)
+{
+  TList* colorList(colorLegend_.GetListOfPrimitives());
+  for(int iL(0); iL != colorList->GetEntries(); ++iL){
+    TLegendEntry* entry(static_cast<TLegendEntry*>(colorList->At(iL)));
+    TString label(entry->GetLabel());
+    if(label.Contains("PFJet")){
+      label.ReplaceAll(pfJetCollection_, _pfJetCollection);
+      entry->SetLabel(label);
+    }
+  }
+
+  pfJetCollection_ = _pfJetCollection;
 }
 
 bool
@@ -161,50 +226,8 @@ RA3EventDisplay::showEvent_()
   etaPhiField_.SetTitle(TString::Format("Run %d, Lumi %d, Event %d", runNumber_, luminosityBlockNumber_, eventNumber_));
   etaPhiField_.Draw();
 
-  TMarker* tenGeV(new TMarker(0., 0., kFullCircle));
-  TMarker* hundredGeV(new TMarker(0., 0., kFullCircle));
-  tenGeV->SetMarkerSize(sizeNorm);
-  hundredGeV->SetMarkerSize(sizeNorm * 2.);
-
-  TLegend* sizeLegend(new TLegend(0.82, 0.35, 0.95, 0.5));
-  sizeLegend->SetBorderSize(0);
-  sizeLegend->SetFillStyle(0);
-  sizeLegend->SetTextAlign(32); // right, center
-  sizeLegend->AddEntry(tenGeV, "10 GeV", "P");
-  sizeLegend->AddEntry(hundredGeV, "100 GeV", "P");
-
-  sizeLegend->Draw();
-
-  garbageCollection_.Add(tenGeV);
-  garbageCollection_.Add(hundredGeV);
-  garbageCollection_.Add(sizeLegend);
-
-  TMarker* photon(new TMarker(0., 0., kFullCircle));
-  TMarker* electron(new TMarker(0., 0., kFullCircle));
-  TMarker* muon(new TMarker(0., 0., kFullCircle));
-  TMarker* jetHadron(new TMarker(0., 0., kFullCircle));
-  TMarker* strayHadron(new TMarker(0., 0., kFullCircle));
-  photon->SetMarkerColor(kGreen);
-  electron->SetMarkerColor(kBlue);
-  muon->SetMarkerColor(kRed);
-  jetHadron->SetMarkerColor(kOrange);
-  strayHadron->SetMarkerColor(kBlack);
-
-  TLegend* colorLegend(new TLegend(0.82, 0.05, 0.95, 0.3));
-  colorLegend->AddEntry(photon, "Photon", "P");
-  colorLegend->AddEntry(electron, "Electron", "P");
-  colorLegend->AddEntry(muon, "Muon", "P");
-  colorLegend->AddEntry(jetHadron, "Hadron in jet", "P");
-  colorLegend->AddEntry(strayHadron, "Hadron not in jet", "P");
-
-  colorLegend->Draw();
-
-  garbageCollection_.Add(photon);
-  garbageCollection_.Add(electron);
-  garbageCollection_.Add(muon);
-  garbageCollection_.Add(jetHadron);
-  garbageCollection_.Add(strayHadron);
-  garbageCollection_.Add(colorLegend);
+  sizeLegend_.Draw();
+  colorLegend_.Draw();
 
   event_.getEntry(currentEntry_);
 
@@ -301,13 +324,11 @@ RA3EventDisplay::showEvent_()
 
   garbageCollection_.Add(metLine);
 
-  TPaveText* eventInfo(new TPaveText(0.82, 0.8, 0.95, 0.95, "brNDC"));
-  eventInfo->SetBorderSize(1);
-  eventInfo->AddText(TString::Format("MET = %.2f GeV", met.met()));
-  eventInfo->AddText(TString::Format("HT = %.2f GeV", ht));
+  eventInfo_.Clear();
 
-  eventInfo->Draw();
+  eventInfo_.AddText(TString::Format("MET = %.2f GeV", met.met()));
+  eventInfo_.AddText(TString::Format("HT = %.2f GeV", ht));
 
-  garbageCollection_.Add(eventInfo);
+  eventInfo_.Draw();
 }
 
