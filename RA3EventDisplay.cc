@@ -17,8 +17,10 @@
 #include <iostream>
 #include <map>
 #include <set>
+#include <stdexcept>
 
 double const sizeNorm(2.);
+double const etaMax(4.);
 
 class RA3EventDisplay {
 public:
@@ -30,6 +32,7 @@ public:
   void setPFJetCollection(TString const&);
 
   bool showEvent(unsigned, unsigned);
+  bool refresh();
   bool showNextEvent();
   void print(TString const& _fileName) { canvas_.Print(_fileName); }
 
@@ -61,7 +64,7 @@ private:
 RA3EventDisplay::RA3EventDisplay() :
   mainTree_("susyTree"),
   scanTree_("susyTree"),
-  ptThreshold_(3.),
+  ptThreshold_(0.),
   pfJetCollection_("ak5"),
   runNumber_(0),
   luminosityBlockNumber_(0),
@@ -69,10 +72,10 @@ RA3EventDisplay::RA3EventDisplay() :
   currentEntry_(-1),
   event_(),
   canvas_("evdisp", "RA3 Event Display"),
-  etaPhiField_("evdisp", ";#eta;#phi", 100, -4., 4., 100, -TMath::Pi(), TMath::Pi()),
-  sizeLegend_(0.82, 0.35, 0.95, 0.5),
-  colorLegend_(0.82, 0.05, 0.95, 0.3),
-  eventInfo_(0.82, 0.8, 0.95, 0.95, "brNDC"),
+  etaPhiField_("evdisp", ";#eta;#phi", 100, -etaMax, etaMax, 100, -TMath::Pi(), TMath::Pi()),
+  sizeLegend_(0.82, 0.35, 0.98, 0.5),
+  colorLegend_(0.82, 0.05, 0.98, 0.3),
+  eventInfo_(0.82, 0.8, 0.98, 0.95, "brNDC"),
   garbageCollection_()
 {
   mainTree_.SetBranchStatus("*", 0);
@@ -116,17 +119,25 @@ RA3EventDisplay::RA3EventDisplay() :
   TMarker* muon(new TMarker(0., 0., kFullCircle));
   TMarker* jetHadron(new TMarker(0., 0., kFullCircle));
   TMarker* strayHadron(new TMarker(0., 0., kFullCircle));
+  TMarker* jet(new TMarker(0., 0., kOpenCircle));
+  TLine* met(new TLine(0., 0., 1., 1.));
   photon->SetMarkerColor(kGreen);
   electron->SetMarkerColor(kBlue);
   muon->SetMarkerColor(kRed);
   jetHadron->SetMarkerColor(kOrange);
   strayHadron->SetMarkerColor(kBlack);
+  jet->SetMarkerColor(kOrange);
+  met->SetLineWidth(2);
+  met->SetLineColor(kRed);
+  met->SetLineStyle(kDashed);
 
   colorLegend_.AddEntry(photon, "Photon", "P");
   colorLegend_.AddEntry(electron, "Electron", "P");
   colorLegend_.AddEntry(muon, "Muon", "P");
-  colorLegend_.AddEntry(jetHadron, "Hadron in " + pfJetCollection_ + "PFJet", "P");
-  colorLegend_.AddEntry(strayHadron, "Hadron not in " + pfJetCollection_ + "PFJet", "P");
+  colorLegend_.AddEntry(jetHadron, "Hadron in jet", "P");
+  colorLegend_.AddEntry(strayHadron, "Hadron not in jet", "P");
+  colorLegend_.AddEntry(jet, pfJetCollection_ + "PFJet", "P");
+  colorLegend_.AddEntry(met, "MET", "L");
 
   eventInfo_.SetBorderSize(1);
 
@@ -188,10 +199,12 @@ RA3EventDisplay::showEvent(unsigned _runNumber, unsigned _eventNumber)
     if(currentEntry_ == start) break;
     int bytes(scanTree_.GetEntry(currentEntry_));
     if(bytes == 0){
-      currentEntry_ = 0;
-      bytes = scanTree_.GetEntry(currentEntry_);
+      currentEntry_ = -1;
+      if(start == -1)
+        break;
     }
-    if(bytes < 0) break;
+    else if(bytes < 0)
+      throw std::runtime_error("Input error");
   }
 
   if(_runNumber == runNumber_ && _eventNumber == eventNumber_){
@@ -207,14 +220,30 @@ RA3EventDisplay::showEvent(unsigned _runNumber, unsigned _eventNumber)
 bool
 RA3EventDisplay::showNextEvent()
 {
-  if(scanTree_.GetEntry(++currentEntry_) > 0){
+  int bytes(scanTree_.GetEntry(++currentEntry_));
+  if(bytes > 0){
     showEvent_();
     return true;
   }
-  else{
+  else if(bytes == 0){
+    currentEntry_ = -1;
     std::cerr << "End of input" << std::endl;
     return false;
   }
+  else
+    throw std::runtime_error("Input error");
+    
+}
+
+bool
+RA3EventDisplay::refresh()
+{
+  if(currentEntry_ != -1){
+    showEvent_();
+    return true;
+  }
+  else
+    return false;
 }
 
 void
@@ -285,8 +314,7 @@ RA3EventDisplay::showEvent_()
     if(uniqueEtaPhi.find(etaPhiPair) != uniqueEtaPhi.end()) continue;
     uniqueEtaPhi.insert(etaPhiPair);
 
-    if(eta < etaPhiField_.GetXaxis()->GetXmin() || eta > etaPhiField_.GetXaxis()->GetXmax()) continue;
-    if(phi < etaPhiField_.GetYaxis()->GetXmin() || phi > etaPhiField_.GetYaxis()->GetXmax()) continue;
+    if(eta < -etaMax || eta > etaMax) continue;
 
     TMarker* marker(new TMarker(eta, phi, kFullCircle));
     switch(part.pdgId){
@@ -315,7 +343,7 @@ RA3EventDisplay::showEvent_()
     garbageCollection_.Add(marker);
   }
 
-  TLine* metLine(new TLine(etaPhiField_.GetXaxis()->GetXmin(), TVector2::Phi_mpi_pi(met.mEt.Phi()), etaPhiField_.GetXaxis()->GetXmax(), TVector2::Phi_mpi_pi(met.mEt.Phi())));
+  TLine* metLine(new TLine(-etaMax, TVector2::Phi_mpi_pi(met.mEt.Phi()), etaMax, TVector2::Phi_mpi_pi(met.mEt.Phi())));
   metLine->SetLineWidth(2);
   metLine->SetLineColor(kRed);
   metLine->SetLineStyle(kDashed);
