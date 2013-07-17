@@ -13,9 +13,11 @@
 #include "TLegend.h"
 #include "TLegendEntry.h"
 #include "TList.h"
+#include "TVector2.h"
 
 #include <iostream>
 #include <map>
+#include <utility>
 #include <set>
 #include <stdexcept>
 
@@ -34,6 +36,10 @@ public:
   bool showEvent(unsigned, unsigned);
   bool refresh();
   bool showNextEvent();
+
+  double mass(unsigned, unsigned = -1, unsigned = -1, unsigned = -1) const;
+  double mt(unsigned, unsigned = -1, unsigned = -1, unsigned = -1) const;
+
   void print(TString const& _fileName) { canvas_.Print(_fileName); }
 
 private:
@@ -54,6 +60,7 @@ private:
 
   TCanvas canvas_;
   TH2F etaPhiField_;
+  TLine metLine_;
   TLegend sizeLegend_;
   TLegend colorLegend_;
   TPaveText eventInfo_;
@@ -73,6 +80,7 @@ RA3EventDisplay::RA3EventDisplay() :
   event_(),
   canvas_("evdisp", "RA3 Event Display"),
   etaPhiField_("evdisp", ";#eta;#phi", 100, -etaMax, etaMax, 100, -TMath::Pi(), TMath::Pi()),
+  metLine_(-etaMax, 0., etaMax, 0.),
   sizeLegend_(0.82, 0.35, 0.98, 0.5),
   colorLegend_(0.82, 0.05, 0.98, 0.3),
   eventInfo_(0.82, 0.8, 0.98, 0.95, "brNDC"),
@@ -103,6 +111,10 @@ RA3EventDisplay::RA3EventDisplay() :
   etaPhiField_.GetXaxis()->SetTitleSize(0.05);
   etaPhiField_.GetYaxis()->SetTitleSize(0.05);
 
+  metLine_.SetLineWidth(2);
+  metLine_.SetLineColor(kRed);
+  metLine_.SetLineStyle(kDashed);
+
   TMarker* tenGeV(new TMarker(0., 0., kFullCircle));
   TMarker* hundredGeV(new TMarker(0., 0., kFullCircle));
   tenGeV->SetMarkerSize(sizeNorm);
@@ -120,16 +132,12 @@ RA3EventDisplay::RA3EventDisplay() :
   TMarker* jetHadron(new TMarker(0., 0., kFullCircle));
   TMarker* strayHadron(new TMarker(0., 0., kFullCircle));
   TMarker* jet(new TMarker(0., 0., kOpenCircle));
-  TLine* met(new TLine(0., 0., 1., 1.));
   photon->SetMarkerColor(kGreen);
   electron->SetMarkerColor(kBlue);
   muon->SetMarkerColor(kRed);
   jetHadron->SetMarkerColor(kOrange);
   strayHadron->SetMarkerColor(kBlack);
   jet->SetMarkerColor(kOrange);
-  met->SetLineWidth(2);
-  met->SetLineColor(kRed);
-  met->SetLineStyle(kDashed);
 
   colorLegend_.AddEntry(photon, "Photon", "P");
   colorLegend_.AddEntry(electron, "Electron", "P");
@@ -137,7 +145,7 @@ RA3EventDisplay::RA3EventDisplay() :
   colorLegend_.AddEntry(jetHadron, "Hadron in jet", "P");
   colorLegend_.AddEntry(strayHadron, "Hadron not in jet", "P");
   colorLegend_.AddEntry(jet, pfJetCollection_ + "PFJet", "P");
-  colorLegend_.AddEntry(met, "MET", "L");
+  colorLegend_.AddEntry(&metLine_, "MET", "L");
 
   eventInfo_.SetBorderSize(1);
 
@@ -151,6 +159,7 @@ RA3EventDisplay::~RA3EventDisplay()
   TList* colorList(colorLegend_.GetListOfPrimitives());
   for(int iL(0); iL != colorList->GetEntries(); ++iL){
     TLegendEntry* entry(static_cast<TLegendEntry*>(colorList->At(iL)));
+    if(TString(entry->GetLabel()) == "MET") continue;
     delete entry->GetObject();
   }
 
@@ -300,23 +309,33 @@ RA3EventDisplay::showEvent_()
     garbageCollection_.Add(circle);
   }
 
-  std::set<std::pair<double, double> > uniqueEtaPhi;
-
+  std::map<std::pair<double, double>, unsigned> sortedAndCleaned;
   for(unsigned iP(0); iP != nPF; ++iP){
     susy::PFParticle const& part(particles[iP]);
     double pt(part.momentum.Pt());
     if(pt < ptThreshold_) continue;
+    double eta(part.momentum.Eta());
+    if(eta < -etaMax || eta > etaMax) continue;
+
+    std::pair<double, double> key(pt, eta);
+    std::map<std::pair<double, double>, unsigned>::iterator itr(sortedAndCleaned.find(key));
+    if(itr != sortedAndCleaned.end()){
+      if(jetConstituents.find(iP) != jetConstituents.end()) itr->second = iP;
+    }
+    else
+      sortedAndCleaned.insert(std::pair<std::pair<double, double>, unsigned>(key, iP));
+  }
+
+  std::map<std::pair<double, double>, unsigned>::reverse_iterator pEnd(sortedAndCleaned.rend());
+  for(std::map<std::pair<double, double>, unsigned>::reverse_iterator pItr(sortedAndCleaned.rbegin()); pItr != pEnd; ++pItr){
+    unsigned iP(pItr->second);
+    susy::PFParticle const& part(particles[iP]);
 
     double eta(part.momentum.Eta());
     double phi(part.momentum.Phi());
 
-    std::pair<double, double> etaPhiPair(eta, phi);
-    if(uniqueEtaPhi.find(etaPhiPair) != uniqueEtaPhi.end()) continue;
-    uniqueEtaPhi.insert(etaPhiPair);
-
-    if(eta < -etaMax || eta > etaMax) continue;
-
     TMarker* marker(new TMarker(eta, phi, kFullCircle));
+    marker->SetUniqueID(iP);
     switch(part.pdgId){
     case 22:
       marker->SetMarkerColor(kGreen);
@@ -336,21 +355,17 @@ RA3EventDisplay::showEvent_()
         marker->SetMarkerColor(kBlack);
       break;
     }
-    marker->SetMarkerSize(sizeNorm * TMath::Log10(pt));
+    marker->SetMarkerSize(sizeNorm * TMath::Log10(part.momentum.Pt()));
 
     marker->Draw();
 
     garbageCollection_.Add(marker);
   }
 
-  TLine* metLine(new TLine(-etaMax, TVector2::Phi_mpi_pi(met.mEt.Phi()), etaMax, TVector2::Phi_mpi_pi(met.mEt.Phi())));
-  metLine->SetLineWidth(2);
-  metLine->SetLineColor(kRed);
-  metLine->SetLineStyle(kDashed);
+  metLine_.SetY1(TVector2::Phi_mpi_pi(met.mEt.Phi()));
+  metLine_.SetY2(TVector2::Phi_mpi_pi(met.mEt.Phi()));
 
-  metLine->Draw();
-
-  garbageCollection_.Add(metLine);
+  metLine_.Draw();
 
   eventInfo_.Clear();
 
@@ -360,3 +375,37 @@ RA3EventDisplay::showEvent_()
   eventInfo_.Draw();
 }
 
+double
+RA3EventDisplay::mass(unsigned _p0, unsigned _p1/* = -1*/, unsigned _p2/* = -1*/, unsigned _p3/* = -1*/) const
+{
+  if(currentEntry_ == -1) return 0.;
+
+  susy::PFParticleCollection const& particles(event_.pfParticles);
+
+  TLorentzVector sumP;
+  if(_p0 < particles.size()) sumP += particles[_p0].momentum;
+  if(_p1 < particles.size()) sumP += particles[_p1].momentum;
+  if(_p2 < particles.size()) sumP += particles[_p2].momentum;
+  if(_p3 < particles.size()) sumP += particles[_p3].momentum;
+
+  return sumP.M();
+}
+
+double
+RA3EventDisplay::mt(unsigned _p0, unsigned _p1/* = -1*/, unsigned _p2/* = -1*/, unsigned _p3/* = -1*/) const
+{
+  if(currentEntry_ == -1) return 0.;
+
+  susy::PFParticleCollection const& particles(event_.pfParticles);
+  susy::METMap::const_iterator mItr(event_.metMap.find("pfType01CorrectedMet"));
+  if(mItr == event_.metMap.end()) return 0.;
+  TVector2 const& met(mItr->second.mEt);
+
+  TVector2 sumPt;
+  if(_p0 < particles.size()) sumPt += TVector2(particles[_p0].momentum.X(), particles[_p0].momentum.Y());
+  if(_p1 < particles.size()) sumPt += TVector2(particles[_p1].momentum.X(), particles[_p1].momentum.Y());
+  if(_p2 < particles.size()) sumPt += TVector2(particles[_p2].momentum.X(), particles[_p2].momentum.Y());
+  if(_p3 < particles.size()) sumPt += TVector2(particles[_p3].momentum.X(), particles[_p3].momentum.Y());
+
+  return TMath::Sqrt(TMath::Power(sumPt.Mod() + met.Mod(), 2.) - (sumPt + met).Mod2());
+}
